@@ -1,0 +1,579 @@
+{
+  "sources": [
+    {
+      "type": "loki",
+      "name": "application-logs-basic",
+      "url": "http://localhost:3100",
+      "query": "{app=\"myapp\"} |= \"error\"",
+      "timeRange": {
+        "from": "now-1h",
+        "to": "now"
+      },
+      "aggregation": {
+        "groupBy": ["level", "service"],
+        "metrics": ["count", "rate"]
+      },
+      "output": {
+        "format": "csv",
+        "filename": "logs/errors-{source}-{timestamp}.csv",
+        "columns": [
+          {
+            "name": "time",
+            "source": "timestamp",
+            "format": "date",
+            "dateFormat": "yyyy-MM-dd HH:mm:ss"
+          },
+          {
+            "name": "level",
+            "source": "labels.level"
+          },
+          {
+            "name": "service",
+            "source": "labels.service"
+          },
+          {
+            "name": "message",
+            "source": "value"
+          },
+          {
+            "name": "count",
+            "source": "metadata.count",
+            "format": "number"
+          }
+        ]
+      }
+    },
+    {
+      "type": "loki",
+      "name": "application-logs-with-field-extraction",
+      "url": "http://localhost:3100",
+      "query": "{job=\"api\"} |= \"error\" | json",
+      "timeRange": {
+        "from": "now-2h",
+        "to": "now"
+      },
+      "extractFields": [
+        {
+          "name": "log_level",
+          "path": "level",
+          "transform": "uppercase"
+        },
+        {
+          "name": "service_name",
+          "path": "service",
+          "transform": "lowercase"
+        },
+        {
+          "name": "error_code",
+          "path": "error_code",
+          "type": "number"
+        },
+        {
+          "name": "timestamp_formatted",
+          "path": "timestamp",
+          "transform": "date",
+          "format": "yyyy-MM-dd HH:mm"
+        }
+      ],
+      "filters": [
+        {
+          "field": "labels.log_level",
+          "pattern": "ERROR|FATAL",
+          "mode": "include",
+          "type": "regex",
+          "caseSensitive": false
+        },
+        {
+          "field": "labels.service_name",
+          "pattern": "test",
+          "mode": "exclude",
+          "type": "contains",
+          "caseSensitive": false
+        }
+      ],
+      "aggregation": {
+        "groupBy": ["service_name", "log_level"],
+        "metrics": [
+          {
+            "name": "error_count",
+            "function": "count"
+          }
+        ]
+      },
+      "output": {
+        "format": "csv",
+        "filename": "logs/filtered-errors-{timestamp}.csv",
+        "columns": [
+          {
+            "name": "service",
+            "source": "labels.service_name"
+          },
+          {
+            "name": "level",
+            "source": "labels.log_level"
+          },
+          {
+            "name": "timestamp",
+            "source": "labels.timestamp_formatted"
+          },
+          {
+            "name": "error_count",
+            "source": "value.error_count",
+            "format": "number"
+          }
+        ]
+      }
+    },
+    {
+      "type": "thanos",
+      "name": "http-metrics-basic",
+      "url": "http://localhost:9090",
+      "query": "rate(http_requests_total[5m])",
+      "timeRange": {
+        "from": "2024-01-01T00:00:00Z",
+        "to": "2024-01-01T23:59:59Z"
+      },
+      "aggregation": {
+        "function": "avg",
+        "interval": "5m",
+        "groupBy": ["method", "status"]
+      },
+      "output": {
+        "format": "csv",
+        "filename": "metrics/http-{source}-{timestamp}.csv",
+        "columns": [
+          {
+            "name": "timestamp",
+            "source": "timestamp",
+            "format": "date",
+            "dateFormat": "yyyy-MM-dd HH:mm:ss"
+          },
+          {
+            "name": "method",
+            "source": "labels.method"
+          },
+          {
+            "name": "status_code",
+            "source": "labels.status"
+          },
+          {
+            "name": "request_rate",
+            "source": "value",
+            "format": "number"
+          }
+        ]
+      }
+    },
+    {
+      "type": "thanos",
+      "name": "alerts-with-timestamp-extraction",
+      "url": "http://localhost:55910",
+      "query": "ALERTS{namespace=\"production\"}",
+      "timeRange": {
+        "from": "now-24h",
+        "to": "now"
+      },
+      "extractFields": [
+        {
+          "name": "date_formatted",
+          "path": "timestamp",
+          "transform": "date",
+          "format": "yyyy-MM-dd HH:mm:ss"
+        },
+        {
+          "name": "date_only",
+          "path": "timestamp",
+          "transform": "date",
+          "format": "yyyy-MM-dd"
+        },
+        {
+          "name": "hour",
+          "path": "timestamp",
+          "transform": "date",
+          "format": "HH"
+        },
+        {
+          "name": "alert_severity",
+          "path": "labels.severity",
+          "transform": "uppercase"
+        }
+      ],
+      "filters": [
+        {
+          "field": "labels.alertname",
+          "pattern": "^(Critical|High)",
+          "mode": "include",
+          "type": "regex",
+          "caseSensitive": false
+        },
+        {
+          "field": "labels.alert_severity",
+          "pattern": "INFO",
+          "mode": "exclude",
+          "type": "exact"
+        },
+        {
+          "field": "value",
+          "pattern": "0",
+          "mode": "exclude",
+          "type": "exact"
+        }
+      ],
+      "aggregation": {
+        "groupBy": ["alertname", "date_only", "hour"],
+        "metrics": [
+          {
+            "name": "alert_count",
+            "function": "count"
+          },
+          {
+            "name": "max_value",
+            "function": "max"
+          }
+        ]
+      },
+      "output": {
+        "format": "csv",
+        "filename": "alerts/filtered-alerts-{timestamp}.csv",
+        "columns": [
+          {
+            "name": "date",
+            "source": "labels.date_only"
+          },
+          {
+            "name": "hour",
+            "source": "labels.hour"
+          },
+          {
+            "name": "alert_name",
+            "source": "labels.alertname"
+          },
+          {
+            "name": "severity",
+            "source": "labels.alert_severity"
+          },
+          {
+            "name": "timestamp_formatted",
+            "source": "labels.date_formatted"
+          },
+          {
+            "name": "count",
+            "source": "value.alert_count",
+            "format": "number"
+          },
+          {
+            "name": "max_value",
+            "source": "value.max_value",
+            "format": "number"
+          }
+        ]
+      }
+    },
+    {
+      "type": "thanos",
+      "name": "response-time-percentiles",
+      "url": "http://localhost:9090",
+      "query": "http_request_duration_seconds{job=\"api\"}",
+      "timeRange": {
+        "from": "now-24h",
+        "to": "now"
+      },
+      "extractFields": [
+        {
+          "name": "endpoint_clean",
+          "path": "labels.endpoint",
+          "transform": "lowercase"
+        },
+        {
+          "name": "method_upper",
+          "path": "labels.method",
+          "transform": "uppercase"
+        }
+      ],
+      "filters": [
+        {
+          "field": "labels.endpoint_clean",
+          "pattern": "/health",
+          "mode": "exclude",
+          "type": "exact"
+        },
+        {
+          "field": "labels.method_upper",
+          "pattern": "OPTIONS",
+          "mode": "exclude",
+          "type": "exact"
+        }
+      ],
+      "aggregation": {
+        "function": "percentile",
+        "percentile": 95,
+        "interval": "1h",
+        "groupBy": ["endpoint_clean", "method_upper"]
+      },
+      "output": {
+        "format": "csv",
+        "filename": "metrics/response-time-p95-{timestamp}.csv",
+        "columns": [
+          {
+            "name": "timestamp",
+            "source": "timestamp",
+            "format": "date",
+            "dateFormat": "yyyy-MM-dd HH:mm:ss"
+          },
+          {
+            "name": "endpoint",
+            "source": "labels.endpoint_clean"
+          },
+          {
+            "name": "method",
+            "source": "labels.method_upper"
+          },
+          {
+            "name": "p95_response_time",
+            "source": "value",
+            "format": "number"
+          }
+        ]
+      }
+    },
+    {
+      "type": "loki",
+      "name": "session-tracking-example",
+      "url": "http://localhost:3100",
+      "query": "{app=\"webapp\"} | json | user_id != \"\"",
+      "timeRange": {
+        "from": "now-7d",
+        "to": "now"
+      },
+      "extractFields": [
+        {
+          "name": "user_id",
+          "path": "user_id"
+        },
+        {
+          "name": "session_id",
+          "path": "session_id"
+        },
+        {
+          "name": "action_type",
+          "path": "action",
+          "transform": "uppercase"
+        },
+        {
+          "name": "day_of_week",
+          "path": "timestamp",
+          "transform": "date",
+          "format": "EEEE"
+        }
+      ],
+      "filters": [
+        {
+          "field": "labels.action_type",
+          "pattern": "LOGIN|LOGOUT|PURCHASE",
+          "mode": "include",
+          "type": "regex"
+        },
+        {
+          "field": "labels.user_id",
+          "pattern": "bot_",
+          "mode": "exclude",
+          "type": "startsWith",
+          "caseSensitive": false
+        }
+      ],
+      "aggregation": {
+        "groupBy": ["user_id", "action_type", "day_of_week"],
+        "metrics": [
+          {
+            "name": "action_count",
+            "function": "count"
+          },
+          {
+            "name": "first_occurrence",
+            "field": "timestamp",
+            "function": "first"
+          },
+          {
+            "name": "last_occurrence",
+            "field": "timestamp",
+            "function": "last"
+          }
+        ]
+      },
+      "output": {
+        "format": "csv",
+        "filename": "analytics/session-tracking-{timestamp}.csv",
+        "columns": [
+          {
+            "name": "user_id",
+            "source": "labels.user_id"
+          },
+          {
+            "name": "action",
+            "source": "labels.action_type"
+          },
+          {
+            "name": "day_of_week",
+            "source": "labels.day_of_week"
+          },
+          {
+            "name": "count",
+            "source": "value.action_count",
+            "format": "number"
+          },
+          {
+            "name": "first_seen",
+            "source": "value.first_occurrence",
+            "format": "date",
+            "dateFormat": "yyyy-MM-dd HH:mm:ss"
+          },
+          {
+            "name": "last_seen",
+            "source": "value.last_occurrence",
+            "format": "date",
+            "dateFormat": "yyyy-MM-dd HH:mm:ss"
+          }
+        ]
+      }
+    },
+    {
+      "type": "thanos",
+      "name": "memory-usage-with-complex-filtering",
+      "url": "http://localhost:9090",
+      "query": "container_memory_usage_bytes{container!=\"POD\"}",
+      "timeRange": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "extractFields": [
+        {
+          "name": "namespace_clean",
+          "path": "labels.namespace",
+          "transform": "lowercase"
+        },
+        {
+          "name": "container_name",
+          "path": "labels.container",
+          "transform": "trim"
+        },
+        {
+          "name": "memory_mb",
+          "path": "value",
+          "type": "number",
+          "format": "0.00"
+        },
+        {
+          "name": "hour_slot",
+          "path": "timestamp",
+          "transform": "date",
+          "format": "HH"
+        }
+      ],
+      "filters": [
+        {
+          "field": "labels.namespace_clean",
+          "pattern": "kube-",
+          "mode": "exclude",
+          "type": "startsWith"
+        },
+        {
+          "field": "labels.container_name",
+          "pattern": "^(app|web|api)",
+          "mode": "include",
+          "type": "regex",
+          "caseSensitive": false
+        },
+        {
+          "field": "value",
+          "pattern": "0",
+          "mode": "exclude",
+          "type": "exact"
+        }
+      ],
+      "aggregation": {
+        "groupBy": ["namespace_clean", "container_name", "hour_slot"],
+        "metrics": [
+          {
+            "name": "avg_memory",
+            "function": "avg"
+          },
+          {
+            "name": "max_memory",
+            "function": "max"
+          },
+          {
+            "name": "data_points",
+            "function": "count"
+          }
+        ]
+      },
+      "output": {
+        "format": "csv",
+        "filename": "metrics/memory-usage-filtered-{timestamp}.csv",
+        "columns": [
+          {
+            "name": "namespace",
+            "source": "labels.namespace_clean"
+          },
+          {
+            "name": "container",
+            "source": "labels.container_name"
+          },
+          {
+            "name": "hour",
+            "source": "labels.hour_slot"
+          },
+          {
+            "name": "avg_memory_mb",
+            "source": "value.avg_memory",
+            "format": "number"
+          },
+          {
+            "name": "max_memory_mb",
+            "source": "value.max_memory",
+            "format": "number"
+          },
+          {
+            "name": "sample_count",
+            "source": "value.data_points",
+            "format": "number"
+          }
+        ]
+      }
+    }
+  ],
+  "output": {
+    "format": "csv",
+    "filename": "default-{source}-{timestamp}.csv",
+    "columns": [
+      {
+        "name": "timestamp",
+        "source": "timestamp",
+        "format": "date",
+        "dateFormat": "yyyy-MM-dd HH:mm:ss"
+      },
+      {
+        "name": "source",
+        "source": "metadata.source"
+      },
+      {
+        "name": "type",
+        "source": "metadata.type"
+      },
+      {
+        "name": "value",
+        "source": "value",
+        "format": "number"
+      },
+      {
+        "name": "labels",
+        "source": "labels",
+        "format": "json"
+      },
+      {
+        "name": "aggregation",
+        "source": "metadata.aggregation"
+      }
+    ]
+  }
+}

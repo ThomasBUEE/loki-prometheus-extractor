@@ -1,0 +1,46 @@
+{
+  "name": "loki-prometheus-extractor",
+  "version": "1.0.0",
+  "description": "Extract and aggregate data from Loki and Thanos APIs to CSV",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "clean": "rm -rf dist",
+    "lint": "eslint src/**/*.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "test:integration": "jest tests/integration.test.ts",
+    "test:unit": "jest --ignore-pattern=integration.test.ts"
+  },
+  "keywords": [
+    "loki",
+    "thanos",
+    "prometheus",
+    "data-extraction",
+    "csv"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.2",
+    "commander": "^11.1.0",
+    "csv-writer": "^1.6.0",
+    "date-fns": "^3.0.6",
+    "joi": "^17.11.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^20.10.5",
+    "@typescript-eslint/eslint-plugin": "^6.21.0",
+    "@typescript-eslint/parser": "^6.21.0",
+    "eslint": "^8.56.0",
+    "jest": "^30.0.2",
+    "ts-jest": "^29.4.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}
