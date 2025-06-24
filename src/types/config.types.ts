@@ -62,12 +62,22 @@ export interface OutputColumn {
   dateFormat?: string;
 }
 
+export interface GoogleSheetsConfig {
+  spreadsheetId: string;
+  sheetName?: string; // Default to 'Sheet1' if not specified
+  credentials?: string; // Path to service account JSON file
+  range?: string; // A1 notation range (e.g., 'A1:Z1000'), optional
+  appendMode?: boolean; // If true, append to existing data, if false, overwrite
+  includeHeadersOnAppend?: boolean; // If true, include headers when appending (default: false)
+}
+
 export interface OutputConfig {
   format: 'csv';
   filename: string;
   columns: OutputColumn[];
   delimiter?: string;
   includeHeaders?: boolean;
+  googleSheets?: GoogleSheetsConfig; // Optional Google Sheets integration
 }
 
 export interface Config {

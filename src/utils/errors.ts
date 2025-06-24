@@ -48,6 +48,13 @@ export class FileSystemError extends ExtractorError {
   }
 }
 
+export class GoogleSheetsError extends ExtractorError {
+  constructor(message: string, public readonly sheetId?: string) {
+    super(message, 'GOOGLE_SHEETS_ERROR');
+    this.name = 'GoogleSheetsError';
+  }
+}
+
 /**
  * Type guard to check if an error is an ExtractorError
  */

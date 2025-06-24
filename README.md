@@ -13,6 +13,7 @@ A powerful Node.js TypeScript tool for extracting, aggregating, and exporting da
 - **Advanced aggregation**: sum, avg, min, max, count, percentiles, first, last
 - **Per-source outputs**: Each data source can have its own output configuration
 - **Customizable CSV columns**: Define exactly which fields to export and their formats
+- **🆕 Google Sheets integration**: Export data directly to Google Sheets with automatic sheet creation
 - **CLI time overrides**: Override configured time ranges via command line
 - **Batch processing**: Process multiple queries efficiently
 - **Error handling**: Continue processing even if individual sources fail
@@ -73,6 +74,36 @@ npm start -- -c config/my-config.json
 ```
 
 3. Check the output CSV file in the current directory.
+
+### 🆕 Google Sheets Integration
+
+To export directly to Google Sheets, add a `googleSheets` configuration:
+
+```json
+{
+  "sources": [...],
+  "outputs": [{
+    "name": "my_export",
+    "sources": ["app-logs"],
+    "outputPath": "logs/",
+    "filename": "data-{timestamp}.csv",
+    "googleSheets": {
+      "spreadsheetId": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms",
+      "sheetName": "LogData",
+      "credentials": "config/google-sheets-credentials.json",
+      "appendMode": true
+    }
+  }]
+}
+```
+
+Enable Google Sheets integration:
+```bash
+export GOOGLE_SHEETS_ENABLED=true
+npm start -- -c config/my-config.json
+```
+
+See the [Google Sheets Quick Start Guide](docs/google-sheets-quickstart.md) for complete setup instructions.
 
 ## Project Structure
 
@@ -733,6 +764,7 @@ npm run typecheck
 
 - `DEBUG=1`: Enable debug logging
 - `FAIL_ON_ERROR=true`: Stop processing if any source fails (default: continue)
+- `GOOGLE_SHEETS_ENABLED=true`: Enable Google Sheets integration
 
 ## Development
 

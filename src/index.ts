@@ -21,6 +21,14 @@ const outputSchema = Joi.object({
   ).min(1).required(),
   delimiter: Joi.string().optional(),
   includeHeaders: Joi.boolean().optional(),
+  googleSheets: Joi.object({
+    spreadsheetId: Joi.string().required(),
+    sheetName: Joi.string().optional(),
+    credentials: Joi.string().optional(),
+    range: Joi.string().optional(),
+    appendMode: Joi.boolean().optional(),
+    includeHeadersOnAppend: Joi.boolean().optional(),
+  }).optional(),
 });
 
 const configSchema = Joi.object({

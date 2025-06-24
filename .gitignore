@@ -6,3 +6,4 @@ dist/
 output-*.csv
 *.csv
 config/config.json
+config/google-sheets-credentials.json

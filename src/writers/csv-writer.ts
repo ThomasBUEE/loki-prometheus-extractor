@@ -4,6 +4,7 @@ import * as path from 'path';
 import { OutputConfig, AggregatedData } from '../types/config.types';
 import { formatDate } from '../utils/date-utils';
 import { extractNestedValue } from '../utils/json-utils';
+import { GoogleSheetsService } from '../services/google-sheets.service';
 
 export class CsvWriter {
   private config: OutputConfig;
@@ -34,6 +35,34 @@ export class CsvWriter {
     });
 
     await csvWriter.writeRecords(records);
+
+    // Google Sheets integration
+    if (this.config.googleSheets) {
+      // Check if Google Sheets can be initialized before creating the service
+      if (GoogleSheetsService.canInitialize(this.config.googleSheets)) {
+        try {
+          console.log(`  📋 Integrating with Google Sheets...`);
+          const googleSheetsService = new GoogleSheetsService(this.config.googleSheets);
+          
+          // Read the generated CSV content
+          const csvContent = fs.readFileSync(filename, 'utf-8');
+          
+          await googleSheetsService.appendData(aggregatedData, csvContent);
+          
+          // Use sync version to avoid initialization issues
+          const sheetUrl = googleSheetsService.getSheetUrlSync();
+          console.log(`  📋 Google Sheets URL: ${sheetUrl}`);
+        } catch (error) {
+          console.error(`  ❌ Google Sheets integration failed:`, error);
+          // Don't throw error to avoid breaking the main export process
+        }
+      } else if (!process.env.GOOGLE_SHEETS_ENABLED) {
+        console.log('  📋 Google Sheets integration configured but disabled (set GOOGLE_SHEETS_ENABLED=true to enable)');
+      } else {
+        console.log('  📋 Google Sheets integration configured but credentials not found or invalid - skipping');
+      }
+    }
+
     return filename;
   }
 
