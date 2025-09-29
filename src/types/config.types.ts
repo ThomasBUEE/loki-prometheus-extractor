@@ -69,6 +69,8 @@ export interface GoogleSheetsConfig {
   range?: string; // A1 notation range (e.g., 'A1:Z1000'), optional
   appendMode?: boolean; // If true, append to existing data, if false, overwrite
   includeHeadersOnAppend?: boolean; // If true, include headers when appending (default: false)
+  truncateLimit?: number; // Maximum characters per cell (default: 49000 to stay under Google Sheets 50k limit)
+  truncateSuffix?: string; // Text to append when truncating (default: '...[truncated]')
 }
 
 export interface OutputConfig {

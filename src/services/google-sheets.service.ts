@@ -142,14 +142,20 @@ export class GoogleSheetsService {
       }
 
       // Parse CSV content to 2D array
-      const sheetData = this.parseCsvData(csvContent);
+      const rawSheetData = this.parseCsvData(csvContent);
 
-      if (sheetData.length === 0) {
+      if (rawSheetData.length === 0) {
         console.log('  ⚠️  No data to upload to Google Sheets');
         return;
       }
 
-      // Determine the range to write to
+      // Truncate data if necessary to respect Google Sheets limits
+      const { data: sheetData, truncatedCount } = this.truncateData(rawSheetData);
+
+      if (truncatedCount > 0) {
+        const limit = this.config.truncateLimit || 49000;
+        console.log(`  ✂️  Truncated ${truncatedCount} cells that exceeded ${limit} characters`);
+      }      // Determine the range to write to
       const sheetName = this.config.sheetName || 'Sheet1';
 
       // Create sheet if it doesn't exist (and it's not the default Sheet1)
@@ -387,5 +393,24 @@ export class GoogleSheetsService {
       return `'${sheetName.replace(/'/g, "''")}'`;
     }
     return sheetName;
+  }
+
+  public truncateData(data: string[][]): { data: string[][], truncatedCount: number } {
+    const limit = this.config.truncateLimit || 49000; // Default to 49k to stay under 50k limit
+    const suffix = this.config.truncateSuffix || '...[truncated]';
+    let truncatedCount = 0;
+
+    const truncatedData = data.map(row =>
+      row.map(cell => {
+        if (typeof cell === 'string' && cell.length > limit) {
+          truncatedCount++;
+          const truncatedCell = cell.substring(0, limit - suffix.length) + suffix;
+          return truncatedCell;
+        }
+        return cell;
+      })
+    );
+
+    return { data: truncatedData, truncatedCount };
   }
 }

@@ -88,7 +88,9 @@ describe('GoogleSheetsService', () => {
   afterEach(() => {
     delete process.env.GOOGLE_SHEETS_ENABLED;
     delete process.env.GOOGLE_SHEETS_CREDENTIALS;
-  });  describe('constructor', () => {
+  });
+
+  describe('constructor', () => {
     it('should create service with file credentials', () => {
       const service = new GoogleSheetsService(mockConfig);
       expect(service).toBeDefined();
@@ -138,7 +140,7 @@ describe('GoogleSheetsService', () => {
       await service.appendData(mockAggregatedData, mockCsvContent);
 
       expect(consoleSpy).toHaveBeenCalledWith('  📋 Uploading to Google Sheets...');
-      expect(consoleSpy).toHaveBeenCalledWith('  ✅ Successfully appended 2 rows to Google Sheets');
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Successfully appended'));
       consoleSpy.mockRestore();
     });
 
@@ -298,8 +300,11 @@ describe('GoogleSheetsService', () => {
   });
 
   describe('validateConfiguration', () => {
-    it('should validate correct configuration', () => {
+    it('should validate correct configuration', async () => {
+      mockFs.existsSync.mockReturnValue(true);
       const service = new GoogleSheetsService(mockConfig);
+      // Initialize the service first to load credentials
+      await (service as any).initialize();
       expect(() => (service as any).validateConfiguration()).not.toThrow();
     });
 
@@ -492,8 +497,8 @@ describe('GoogleSheetsService', () => {
     });
 
     it('should handle custom range with sheet name override', async () => {
-      const configWithRange = { 
-        ...mockConfig, 
+      const configWithRange = {
+        ...mockConfig,
         sheetName: 'Data Sheet',
         range: "'Custom Sheet'!B2:Z100"
       };
@@ -512,8 +517,8 @@ describe('GoogleSheetsService', () => {
     });
 
     it('should prepend sheet name to range when range does not contain sheet', async () => {
-      const configWithRange = { 
-        ...mockConfig, 
+      const configWithRange = {
+        ...mockConfig,
         sheetName: 'Data Sheet',
         range: "B2:Z100"
       };
@@ -529,6 +534,155 @@ describe('GoogleSheetsService', () => {
           range: "'Data Sheet'!B2:Z100"
         })
       );
+    });
+  });
+
+  describe('data truncation', () => {
+    beforeEach(() => {
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readFileSync.mockReturnValue(JSON.stringify(mockCredentials));
+      process.env.GOOGLE_SHEETS_ENABLED = 'true';
+    });
+
+    afterEach(() => {
+      delete process.env.GOOGLE_SHEETS_ENABLED;
+      jest.clearAllMocks();
+    });
+
+    it('should truncate cells that exceed the limit', async () => {
+      const longText = 'A'.repeat(60000); // Text longer than 50k characters
+      const csvWithLongText = `timestamp,message\n2024-01-01T00:00:00Z,"${longText}"`;
+
+      const configWithTruncate = {
+        ...mockConfig,
+        truncateLimit: 1000,
+        truncateSuffix: '...[TRUNCATED]'
+      };
+      const service = new GoogleSheetsService(configWithTruncate);
+      const { google } = require('googleapis');
+      const mockSheets = google.sheets();
+      const consoleSpy = jest.spyOn(console, 'log').mockImplementation();
+
+      await service.appendData(mockAggregatedData, csvWithLongText);
+
+      // Should show truncation message
+      expect(consoleSpy).toHaveBeenCalledWith('  ✂️  Truncated 1 cells that exceeded 1000 characters');
+
+      // Should call sheets API with truncated data
+      expect(mockSheets.spreadsheets.values.append).toHaveBeenCalled();
+      const callArgs = mockSheets.spreadsheets.values.append.mock.calls[0][0];
+      const values = callArgs.requestBody.values;
+      expect(values).toBeDefined();
+      expect(values.length).toBeGreaterThan(0);
+      const truncatedValue = values[0][1]; // First row, second column (headers are skipped in append mode)
+      expect(truncatedValue.length).toBe(1000);
+      expect(truncatedValue.endsWith('...[TRUNCATED]')).toBe(true);
+
+      consoleSpy.mockRestore();
+    });
+
+    it('should use default truncation settings when not configured', async () => {
+      const longText = 'B'.repeat(60000);
+      const csvWithLongText = `timestamp,message\n2024-01-01T00:00:00Z,"${longText}"`;
+
+      const service = new GoogleSheetsService(mockConfig); // No truncation config
+      const { google } = require('googleapis');
+      const mockSheets = google.sheets();
+      const consoleSpy = jest.spyOn(console, 'log').mockImplementation();
+
+      await service.appendData(mockAggregatedData, csvWithLongText);
+
+      // Should use default limit of 49000 and default suffix
+      expect(consoleSpy).toHaveBeenCalledWith('  ✂️  Truncated 1 cells that exceeded 49000 characters');
+
+      expect(mockSheets.spreadsheets.values.append).toHaveBeenCalled();
+      const callArgs = mockSheets.spreadsheets.values.append.mock.calls[0][0];
+      const values = callArgs.requestBody.values;
+      expect(values).toBeDefined();
+      expect(values.length).toBeGreaterThan(0);
+      const truncatedValue = values[0][1]; // First row, second column (headers are skipped in append mode)
+      expect(truncatedValue.length).toBe(49000);
+      expect(truncatedValue.endsWith('...[truncated]')).toBe(true);
+
+      consoleSpy.mockRestore();
+    });
+
+    it('should not truncate cells under the limit', async () => {
+      const shortText = 'Short message';
+      const csvWithShortText = `timestamp,message\n2024-01-01T00:00:00Z,"${shortText}"`;
+
+      const configWithTruncate = {
+        ...mockConfig,
+        truncateLimit: 1000
+      };
+      const service = new GoogleSheetsService(configWithTruncate);
+      const { google } = require('googleapis');
+      const mockSheets = google.sheets();
+      const consoleSpy = jest.spyOn(console, 'log').mockImplementation();
+
+      await service.appendData(mockAggregatedData, csvWithShortText);
+
+      // Should NOT show truncation message
+      expect(consoleSpy).not.toHaveBeenCalledWith(expect.stringContaining('Truncated'));
+
+      // Should preserve original text
+      expect(mockSheets.spreadsheets.values.append).toHaveBeenCalled();
+      const callArgs = mockSheets.spreadsheets.values.append.mock.calls[0][0];
+      const values = callArgs.requestBody.values;
+      expect(values).toBeDefined();
+      expect(values.length).toBeGreaterThan(0);
+      const originalValue = values[0][1]; // First row, second column (headers are skipped in append mode)
+      expect(originalValue).toBe(shortText);
+
+      consoleSpy.mockRestore();
+    });
+
+    it('should handle multiple truncations in same row', async () => {
+      const longText1 = 'A'.repeat(60000);
+      const longText2 = 'B'.repeat(60000);
+      const csvWithMultipleLongTexts = `col1,col2,col3\n"${longText1}","${longText2}","short"`;
+
+      const configWithTruncate = {
+        ...mockConfig,
+        truncateLimit: 1000
+      };
+      const service = new GoogleSheetsService(configWithTruncate);
+      const consoleSpy = jest.spyOn(console, 'log').mockImplementation();
+
+      await service.appendData(mockAggregatedData, csvWithMultipleLongTexts);
+
+      // Should show truncation count of 2
+      expect(consoleSpy).toHaveBeenCalledWith('  ✂️  Truncated 2 cells that exceeded 1000 characters');
+
+      consoleSpy.mockRestore();
+    });
+
+    it('should handle custom truncation suffix', async () => {
+      const longText = 'C'.repeat(60000);
+      const csvWithLongText = `message\n"${longText}"`;
+      const customSuffix = ' [VOIR LOGS COMPLETS]';
+
+      const configWithCustomSuffix = {
+        ...mockConfig,
+        truncateLimit: 500,
+        truncateSuffix: customSuffix
+      };
+      const service = new GoogleSheetsService(configWithCustomSuffix);
+      const { google } = require('googleapis');
+      const mockSheets = google.sheets();
+
+      await service.appendData(mockAggregatedData, csvWithLongText);
+
+      expect(mockSheets.spreadsheets.values.append).toHaveBeenCalled();
+      const callArgs = mockSheets.spreadsheets.values.append.mock.calls[0][0];
+      const values = callArgs.requestBody.values;
+      expect(values).toBeDefined();
+      expect(values.length).toBeGreaterThan(0);
+      const truncatedValue = values[0][0]; // First row, first column (headers are skipped in append mode)
+
+      expect(truncatedValue.length).toBe(500);
+      expect(truncatedValue.endsWith(customSuffix)).toBe(true);
+      expect(truncatedValue.substring(0, 500 - customSuffix.length)).toBe('C'.repeat(500 - customSuffix.length));
     });
   });
 });

@@ -28,6 +28,8 @@ const outputSchema = Joi.object({
     range: Joi.string().optional(),
     appendMode: Joi.boolean().optional(),
     includeHeadersOnAppend: Joi.boolean().optional(),
+    truncateLimit: Joi.number().min(1000).max(50000).optional(),
+    truncateSuffix: Joi.string().max(100).optional(),
   }).optional(),
 });
 
