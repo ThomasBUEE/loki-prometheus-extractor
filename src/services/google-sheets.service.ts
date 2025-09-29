@@ -150,7 +150,8 @@ export class GoogleSheetsService {
       }
 
       // Truncate data if necessary to respect Google Sheets limits
-      const { data: sheetData, truncatedCount } = this.truncateData(rawSheetData);
+      // Pass original CSV content to preserve quote information during truncation
+      const { data: sheetData, truncatedCount } = this.truncateDataWithContext(rawSheetData, csvContent);
 
       if (truncatedCount > 0) {
         const limit = this.config.truncateLimit || 49000;
@@ -265,45 +266,62 @@ export class GoogleSheetsService {
   }
 
   private parseCsvData(csvContent: string): string[][] {
-    // Parse CSV content into 2D array for Google Sheets API
-    const lines = csvContent.split('\n').filter(line => line.trim());
+    // Robust CSV parser that handles newlines within quoted fields
+    const result: string[][] = [];
+    const csvLength = csvContent.length;
 
-    return lines.map(line => {
-      // More robust CSV parsing that handles quoted fields with commas
-      const result: string[] = [];
-      let current = '';
-      let inQuotes = false;
+    let i = 0;
+    let currentRow: string[] = [];
+    let currentField = '';
+    let inQuotes = false;
 
-      for (let i = 0; i < line.length; i++) {
-        const char = line[i];
+    while (i < csvLength) {
+      const char = csvContent[i];
 
-        if (char === '"' && (i === 0 || line[i - 1] !== '\\')) {
-          // Toggle quote state (ignore escaped quotes)
-          inQuotes = !inQuotes;
-        } else if (char === ',' && !inQuotes) {
-          // End of field
-          result.push(current.trim());
-          current = '';
+      if (char === '"') {
+        // Handle quoted fields and escaped quotes
+        if (inQuotes && i + 1 < csvLength && csvContent[i + 1] === '"') {
+          // Double quote (escaped quote) - add single quote to field
+          currentField += '"';
+          i += 2; // Skip both quotes
+          continue;
         } else {
-          // Add character to current field
-          current += char;
+          // Toggle quote state
+          inQuotes = !inQuotes;
         }
+      } else if (char === ',' && !inQuotes) {
+        // Field separator - end current field
+        currentRow.push(currentField);
+        currentField = '';
+      } else if (char === '\n' && !inQuotes) {
+        // Row separator - end current row (only when not inside quotes)
+        currentRow.push(currentField);
+        if (currentRow.some(field => field.trim() !== '')) {
+          // Only add non-empty rows
+          result.push(currentRow);
+        }
+        currentRow = [];
+        currentField = '';
+      } else if (char === '\r' && !inQuotes) {
+        // Handle Windows line endings (\r\n) - skip \r when not in quotes
+        // The \n will be handled in the next iteration
+      } else {
+        // Regular character (including newlines within quotes)
+        currentField += char;
       }
 
-      // Add the last field
-      if (current) {
-        result.push(current.trim());
-      }
+      i++;
+    }
 
-      // Clean up quoted fields
-      return result.map(cell => {
-        // Remove surrounding quotes and unescape internal quotes
-        if (cell.startsWith('"') && cell.endsWith('"')) {
-          return cell.slice(1, -1).replace(/\\"/g, '"');
-        }
-        return cell;
-      });
-    });
+    // Add the last field and row if there's remaining content
+    if (currentField !== '' || currentRow.length > 0) {
+      currentRow.push(currentField);
+      if (currentRow.some(field => field.trim() !== '')) {
+        result.push(currentRow);
+      }
+    }
+
+    return result;
   }
 
   async getSheetUrl(): Promise<string> {
@@ -404,7 +422,126 @@ export class GoogleSheetsService {
       row.map(cell => {
         if (typeof cell === 'string' && cell.length > limit) {
           truncatedCount++;
-          const truncatedCell = cell.substring(0, limit - suffix.length) + suffix;
+
+          // Calculate available space for content (accounting for suffix)
+          const availableSpace = limit - suffix.length;
+
+          // Check if the original cell was quoted (common in CSV)
+          const isQuoted = cell.startsWith('"') && cell.endsWith('"');
+
+          let truncatedCell: string;
+          if (isQuoted) {
+            // For quoted cells, preserve the quote structure
+            // Remove outer quotes, truncate content, add suffix, then re-add quotes
+            const innerContent = cell.slice(1, -1); // Remove outer quotes
+            const quotesSpace = 2; // Space for opening and closing quotes
+            const contentSpace = availableSpace - quotesSpace;
+
+            if (contentSpace > 0) {
+              const truncatedContent = innerContent.substring(0, contentSpace);
+              truncatedCell = `"${truncatedContent}${suffix}"`;
+            } else {
+              // If no space for content, just return quoted suffix
+              truncatedCell = `"${suffix}"`;
+            }
+          } else {
+            // For unquoted cells, simple truncation
+            truncatedCell = cell.substring(0, availableSpace) + suffix;
+          }
+
+          return truncatedCell;
+        }
+        return cell;
+      })
+    );
+
+    return { data: truncatedData, truncatedCount };
+  }
+
+  private truncateDataWithContext(data: string[][], csvContent: string): { data: string[][], truncatedCount: number } {
+    const limit = this.config.truncateLimit || 49000; // Default to 49k to stay under 50k limit
+    const suffix = this.config.truncateSuffix || '...[truncated]';
+    let truncatedCount = 0;
+
+    // Extract quote information from original CSV content using robust parsing
+    const quoteMap = new Map<string, boolean>();
+    const csvLength = csvContent.length;
+
+    let i = 0;
+    let currentRowIndex = 0;
+    let currentCellIndex = 0;
+    let currentField = '';
+    let inQuotes = false;
+
+    while (i < csvLength) {
+      const char = csvContent[i];
+
+      if (char === '"') {
+        if (inQuotes && i + 1 < csvLength && csvContent[i + 1] === '"') {
+          // Double quote (escaped quote)
+          currentField += '"';
+          i += 2;
+          continue;
+        } else {
+          // Mark this cell as quoted if we're entering quotes at start of field
+          if (!inQuotes && currentField === '') {
+            quoteMap.set(`${currentRowIndex}-${currentCellIndex}`, true);
+          }
+          inQuotes = !inQuotes;
+        }
+      } else if (char === ',' && !inQuotes) {
+        // Field separator
+        currentCellIndex++;
+        currentField = '';
+      } else if (char === '\n' && !inQuotes) {
+        // Row separator (only when not inside quotes)
+        currentRowIndex++;
+        currentCellIndex = 0;
+        currentField = '';
+      } else if (char === '\r' && !inQuotes) {
+        // Handle Windows line endings - skip \r when not in quotes
+      } else {
+        // Regular character (including newlines within quotes)
+        currentField += char;
+      }
+
+      i++;
+    }
+
+    const truncatedData = data.map((row, rowIndex) =>
+      row.map((cell, cellIndex) => {
+        if (typeof cell === 'string' && cell.length > limit) {
+          truncatedCount++;
+
+          const availableSpace = limit - suffix.length;
+          const wasQuoted = quoteMap.get(`${rowIndex}-${cellIndex}`) || false;
+
+          let truncatedCell: string;
+          if (wasQuoted) {
+            // For originally quoted cells, preserve newlines and add quotes
+            const quotesSpace = 2; // Space for opening and closing quotes
+            const contentSpace = availableSpace - quotesSpace;
+
+            if (contentSpace > 0) {
+              const truncatedContent = cell.substring(0, contentSpace);
+              // Keep newlines as-is in quoted cells (they're valid in CSV when quoted)
+              truncatedCell = `"${truncatedContent}${suffix}"`;
+            } else {
+              truncatedCell = `"${suffix}"`;
+            }
+          } else {
+            // For unquoted cells, replace newlines with spaces and truncate
+            // This prevents breaking CSV structure for unquoted cells
+            const cellWithoutNewlines = cell.replace(/[\r\n]+/g, ' ');
+            if (cellWithoutNewlines.length > limit) {
+              truncatedCell = cellWithoutNewlines.substring(0, availableSpace) + suffix;
+            } else {
+              // If replacing newlines made it fit, use the cleaned version
+              truncatedCell = cellWithoutNewlines;
+              truncatedCount--; // Don't count this as truncation since we just cleaned it
+            }
+          }
+
           return truncatedCell;
         }
         return cell;

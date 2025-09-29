@@ -681,8 +681,153 @@ describe('GoogleSheetsService', () => {
       const truncatedValue = values[0][0]; // First row, first column (headers are skipped in append mode)
 
       expect(truncatedValue.length).toBe(500);
-      expect(truncatedValue.endsWith(customSuffix)).toBe(true);
-      expect(truncatedValue.substring(0, 500 - customSuffix.length)).toBe('C'.repeat(500 - customSuffix.length));
+      expect(truncatedValue.endsWith('"')).toBe(true); // Should end with quote for quoted CSV cells
+      expect(truncatedValue.includes(customSuffix)).toBe(true); // Should contain the custom suffix
+      expect(truncatedValue.startsWith('"')).toBe(true); // Should start with quote for quoted CSV cells
+    });
+
+    it('should preserve CSV quote structure when truncating quoted cells', async () => {
+      const longText = 'X'.repeat(1000);
+      const csvWithQuotedLongText = `message\n"${longText}"`;
+      
+      const configWithTruncate = { 
+        ...mockConfig, 
+        truncateLimit: 100,
+        truncateSuffix: '...[TRUNCATED]'
+      };
+      const service = new GoogleSheetsService(configWithTruncate);
+      const { google } = require('googleapis');
+      const mockSheets = google.sheets();
+
+      await service.appendData(mockAggregatedData, csvWithQuotedLongText);
+
+      expect(mockSheets.spreadsheets.values.append).toHaveBeenCalled();
+      const callArgs = mockSheets.spreadsheets.values.append.mock.calls[0][0];
+      const values = callArgs.requestBody.values;
+      const truncatedValue = values[0][0];
+
+      // Should maintain quote structure
+      expect(truncatedValue.startsWith('"')).toBe(true);
+      expect(truncatedValue.endsWith('"')).toBe(true);
+      expect(truncatedValue.length).toBe(100);
+      
+      // Should contain the suffix inside the quotes
+      expect(truncatedValue).toMatch(/^".*\.\.\.\[TRUNCATED\]"$/);
+    });
+
+    it('should handle unquoted cells differently from quoted cells', async () => {
+      const longText = 'Y'.repeat(1000);
+      const csvWithUnquotedLongText = `message\n${longText}`;
+      
+      const configWithTruncate = { 
+        ...mockConfig, 
+        truncateLimit: 100,
+        truncateSuffix: '...[TRUNCATED]'
+      };
+      const service = new GoogleSheetsService(configWithTruncate);
+      const { google } = require('googleapis');
+      const mockSheets = google.sheets();
+
+      await service.appendData(mockAggregatedData, csvWithUnquotedLongText);
+
+      expect(mockSheets.spreadsheets.values.append).toHaveBeenCalled();
+      const callArgs = mockSheets.spreadsheets.values.append.mock.calls[0][0];
+      const values = callArgs.requestBody.values;
+      const truncatedValue = values[0][0];
+
+      // Should NOT have quotes (since original was unquoted)
+      expect(truncatedValue.startsWith('"')).toBe(false);
+      expect(truncatedValue.endsWith('"')).toBe(false);
+      expect(truncatedValue.length).toBe(100);
+      expect(truncatedValue.endsWith('...[TRUNCATED]')).toBe(true);
+    });
+  });
+
+  describe('CSV parsing with newlines', () => {
+    beforeEach(() => {
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readFileSync.mockReturnValue(JSON.stringify(mockCredentials));
+      process.env.GOOGLE_SHEETS_ENABLED = 'true';
+    });
+
+    afterEach(() => {
+      delete process.env.GOOGLE_SHEETS_ENABLED;
+      jest.clearAllMocks();
+    });
+
+    it('should correctly parse CSV with newlines in quoted fields', () => {
+      const csvWithNewlines = `timestamp,message
+"2024-01-01","Single line message"
+"2024-01-02","Multi-line message:
+Line 1
+Line 2"
+"2024-01-03","Another message"`;
+
+      const service = new GoogleSheetsService(mockConfig);
+      const parsedData = (service as any).parseCsvData(csvWithNewlines);
+
+      expect(parsedData).toHaveLength(4); // Header + 3 data rows
+      expect(parsedData[0]).toEqual(['timestamp', 'message']);
+      expect(parsedData[1]).toEqual(['2024-01-01', 'Single line message']);
+      expect(parsedData[2]).toEqual(['2024-01-02', 'Multi-line message:\nLine 1\nLine 2']);
+      expect(parsedData[3]).toEqual(['2024-01-03', 'Another message']);
+      
+      // Verify that newlines are preserved in the multi-line cell
+      expect(parsedData[2][1]).toContain('\n');
+      expect(parsedData[2][1].split('\n')).toHaveLength(3); // "Multi-line message:" + "Line 1" + "Line 2"
+    });
+
+    it('should handle newlines in unquoted fields during truncation', async () => {
+      const csvWithUnquotedNewlines = `message
+This message has
+multiple lines without quotes`;
+
+      const configWithTruncate = { 
+        ...mockConfig, 
+        truncateLimit: 50,
+        truncateSuffix: '...[CUT]'
+      };
+      const service = new GoogleSheetsService(configWithTruncate);
+      const { google } = require('googleapis');
+      const mockSheets = google.sheets();
+
+      await service.appendData(mockAggregatedData, csvWithUnquotedNewlines);
+
+      expect(mockSheets.spreadsheets.values.append).toHaveBeenCalled();
+      const callArgs = mockSheets.spreadsheets.values.append.mock.calls[0][0];
+      const values = callArgs.requestBody.values;
+      const processedValue = values[0][0];
+
+      // Newlines should be replaced with spaces in unquoted cells
+      expect(processedValue).not.toContain('\n');
+      expect(processedValue).toContain(' '); // Newlines replaced with spaces
+    });
+
+    it('should preserve newlines in quoted fields during truncation', async () => {
+      const longMultiLineText = 'Line 1\nLine 2\nLine 3\n' + 'X'.repeat(1000);
+      const csvWithQuotedNewlines = `message\n"${longMultiLineText}"`;
+
+      const configWithTruncate = { 
+        ...mockConfig, 
+        truncateLimit: 100,
+        truncateSuffix: '...[CUT]'
+      };
+      const service = new GoogleSheetsService(configWithTruncate);
+      const { google } = require('googleapis');
+      const mockSheets = google.sheets();
+
+      await service.appendData(mockAggregatedData, csvWithQuotedNewlines);
+
+      expect(mockSheets.spreadsheets.values.append).toHaveBeenCalled();
+      const callArgs = mockSheets.spreadsheets.values.append.mock.calls[0][0];
+      const values = callArgs.requestBody.values;
+      const truncatedValue = values[0][0];
+
+      // Should preserve newlines in quoted cells and maintain quote structure
+      expect(truncatedValue.startsWith('"')).toBe(true);
+      expect(truncatedValue.endsWith('"')).toBe(true);
+      expect(truncatedValue).toContain('\n'); // Newlines should be preserved
+      expect(truncatedValue.length).toBe(100);
     });
   });
 });
